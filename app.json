@@ -3,6 +3,7 @@
     "name": "app",
     "slug": "app",
     "version": "1.0.0",
+    "scheme": "tesistopo",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -20,15 +21,29 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true,
-      "package": "com.lazar.app"
-    },
-    "web": {
-      "favicon": "./assets/favicon.png"
+      "package": "com.lazar.app",
+      "permissions": [
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "INTERNET"
+      ],
+      "intentFilters": [
+        {
+          "action": "SEND",
+          "data": {
+            "mimeType": "application/pdf"
+          }
+        }
+      ]
     },
     "plugins": [
       "@react-native-community/datetimepicker",
-      "expo-mail-composer",
+      [
+        "expo-mail-composer",
+        {
+          "canModifyRecipients": true
+        }
+      ],
       "expo-asset"
     ],
     "extra": {

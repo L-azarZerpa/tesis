@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
-import { 
-  View, Text, TouchableOpacity, FlatList, Alert, Modal, 
-  ActivityIndicator, Image, SafeAreaView, StatusBar, StyleSheet, ScrollView 
+import React, { useEffect, useState, useMemo } from 'react';
+import {
+  View, Text, TouchableOpacity, FlatList, Alert, Modal,
+  ActivityIndicator, Image, SafeAreaView, StatusBar, StyleSheet, ScrollView
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -11,7 +11,7 @@ import { sendReportByEmail } from '../services/ReportService';
 export default function ReporteScreen({ navigation }) {
   const [registrosSuma, setRegistrosSuma] = useState([]);
   const [registrosResta, setRegistrosResta] = useState([]);
-  const [planificacion, setPlanificacion] = useState([]); 
+  const [planificacion, setPlanificacion] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedList, setSelectedList] = useState('sumas');
   const [modals, setModals] = useState({ menu: false });
@@ -24,50 +24,60 @@ export default function ReporteScreen({ navigation }) {
   const cargarTodosLosDatos = async () => {
     try {
       setLoading(true);
-      // 1. Entradas (Suma)
+
+      // 1. Cargar Entradas
       const { data: sData } = await supabase.from('registros_suma').select('*').order('fecha', { ascending: false });
-      
-      // 2. Salidas (Resta)
+
+      // 2. Cargar Salidas
       const { data: rData } = await supabase.from('registros_resta').select('*').order('fecha', { ascending: false });
-      
-      // 3. Planificación Semanal (MENÚS) - Traemos el nombre del plato relacionado
-      const { data: pData } = await supabase
+
+      // 3. Cargar Planificación con RELACIONES (Platos -> Ingredientes -> Productos)
+      const { data: pData, error: pError } = await supabase
         .from('planificacion_semanal')
         .select(`
           id, 
           fecha_menu, 
           turno, 
           notas, 
-          platos (nombre)
+          platos (
+            nombre,
+            platos_ingredientes (
+              cantidad_sugerida,
+              productos (nombre, unidad)
+            )
+          )
         `)
         .order('fecha_menu', { ascending: false });
+
+      if (pError) throw pError;
 
       setRegistrosSuma(sData || []);
       setRegistrosResta(rData || []);
       setPlanificacion(pData || []);
-    } catch (e) { 
-      Alert.alert('Error', 'No se cargaron los datos correctamente'); 
-    } finally { 
-      setLoading(false); 
+    } catch (e) {
+      Alert.alert('Error', 'No se cargaron los datos correctamente');
+      console.error("Detalle error carga:", e);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const getListData = () => {
+  // Filtrado optimizado con useMemo
+  const dataFiltrada = useMemo(() => {
     let data = selectedList === 'sumas' ? registrosSuma : selectedList === 'restas' ? registrosResta : planificacion;
-    
+
     if (fechaInicial && fechaSecundaria) {
-      data = data.filter(item => {
-        // Normalizamos la fecha según la tabla
+      const inicio = new Date(fechaInicial).setHours(0, 0, 0, 0);
+      const fin = new Date(fechaSecundaria).setHours(23, 59, 59, 999);
+
+      return data.filter(item => {
         const rawDate = item.fecha || item.fecha_menu || item.created_at;
-        const itemDate = new Date(rawDate);
-        const d = new Date(itemDate.setHours(0,0,0,0));
-        const inicio = new Date(new Date(fechaInicial).setHours(0,0,0,0));
-        const fin = new Date(new Date(fechaSecundaria).setHours(23,59,59,999));
+        const d = new Date(rawDate).getTime();
         return d >= inicio && d <= fin;
       });
     }
     return data;
-  };
+  }, [selectedList, registrosSuma, registrosResta, planificacion, fechaInicial, fechaSecundaria]);
 
   const opcionesTablas = [
     { id: 'sumas', label: 'ENTRADAS', icon: 'add-circle', color: '#0100D9' },
@@ -78,30 +88,41 @@ export default function ReporteScreen({ navigation }) {
   const currentConfig = opcionesTablas.find(o => o.id === selectedList);
 
   const handleEnviarReporte = async () => {
-    setModals({ menu: false });
-    if (!fechaInicial || !fechaSecundaria) return Alert.alert("Aviso", "Seleccione el rango de fechas.");
-    const dataActual = getListData();
-    if (dataActual.length === 0) return Alert.alert("Aviso", "No hay datos en este rango.");
+    setModals(prev => ({ ...prev, menu: false }));
+
+    if (!fechaInicial || !fechaSecundaria) {
+      return Alert.alert("Aviso", "Seleccione el rango de fechas para el reporte.");
+    }
+
+    if (dataFiltrada.length === 0) {
+      return Alert.alert("Aviso", "No hay datos en este rango para exportar.");
+    }
 
     try {
       setLoading(true);
-      await sendReportByEmail(dataActual, { ...currentConfig, type: selectedList }, { 
-        inicio: fechaInicial.toLocaleDateString(), 
-        fin: fechaSecundaria.toLocaleDateString() 
-      });
-      Alert.alert("Éxito", "Reporte enviado correctamente.");
-    } catch (e) { 
-      Alert.alert("Error", "No se pudo generar el reporte."); 
-    } finally { 
-      setLoading(false); 
+      await sendReportByEmail(
+        dataFiltrada,
+        {
+          ...currentConfig,
+          type: selectedList,
+          title: currentConfig.label
+        },
+        {
+          inicio: fechaInicial.toLocaleDateString(),
+          fin: fechaSecundaria.toLocaleDateString()
+        }
+      );
+    } catch (e) {
+      Alert.alert("Error de Reporte", e.message || "No se pudo generar el PDF.");
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFF" />
-      
-      {/* HEADER */}
+
       <View style={styles.header}>
         <View style={styles.headerLeftContainer}>
           <TouchableOpacity onPress={() => navigation.goBack()}><MaterialIcons name="arrow-back" size={30} color="#0100D9" /></TouchableOpacity>
@@ -112,15 +133,14 @@ export default function ReporteScreen({ navigation }) {
         </View>
         <View style={styles.headerRightContainer}>
           <Image source={require('../assets/icon.png')} style={styles.logo} />
-          <TouchableOpacity onPress={() => setModals({menu: true})}>
+          <TouchableOpacity onPress={() => setModals({ menu: true })}>
             <MaterialIcons name="menu" size={30} color="#0100D9" />
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* FILTROS DE FECHA */}
       <View style={styles.filterSection}>
-        <Text style={styles.fieldLabel}>RANGO DE CONSULTA</Text>
+        <Text style={styles.fieldLabel}>RANGO DE CONSULTA (SEMANAL/MENSUAL)</Text>
         <View style={styles.dateRow}>
           <TouchableOpacity style={styles.dateInput} onPress={() => setShowDatePicker({ show: true, type: 'inicial' })}>
             <MaterialIcons name="calendar-today" size={18} color="#0100D9" />
@@ -133,12 +153,11 @@ export default function ReporteScreen({ navigation }) {
         </View>
       </View>
 
-      {/* BARRA DESLIZABLE DE OPCIONES */}
       <View style={styles.tabBarContainer}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabScrollContent}>
           {opcionesTablas.map((op) => (
-            <TouchableOpacity 
-              key={op.id} 
+            <TouchableOpacity
+              key={op.id}
               onPress={() => setSelectedList(op.id)}
               style={[styles.tabItem, selectedList === op.id && { backgroundColor: op.color, borderColor: op.color }]}
             >
@@ -149,72 +168,57 @@ export default function ReporteScreen({ navigation }) {
         </ScrollView>
       </View>
 
-      {/* LISTA DE RESULTADOS */}
       {loading ? (
         <View style={{ flex: 1, justifyContent: 'center' }}><ActivityIndicator size="large" color="#0100D9" /></View>
       ) : (
-        <FlatList 
-          data={getListData()} 
-          keyExtractor={(item) => item.id.toString()} 
+        <FlatList
+          data={dataFiltrada}
+          keyExtractor={(item) => item.id.toString()}
           renderItem={({ item }) => (
             <View style={styles.itemCard}>
               <View style={{ flex: 1 }}>
-                {/* Título dinámico */}
                 <Text style={styles.itemTitle}>
-                  {selectedList === 'menus' ? (item.platos?.nombre || 'Plato no definido') : item.producto_nombre}
+                  {selectedList === 'menus' ? (item.platos?.nombre || 'Sin plato') : item.producto_nombre}
                 </Text>
-                
-                {/* Subtítulo dinámico */}
                 <Text style={styles.itemSub}>
                   {selectedList === 'sumas' && `Cant: ${item.cantidad} • ${item.organizacion}`}
-                  {selectedList === 'restas' && `Cant: ${item.cantidad} • E: ${item.estudiantes} P: ${item.profesores}`}
+                  {selectedList === 'restas' && `Cant: ${item.cantidad} • Atendidos: ${item.estudiantes + item.profesores}`}
                   {selectedList === 'menus' && `${item.turno} ${item.notas ? `• ${item.notas}` : ''}`}
                 </Text>
-
                 <Text style={styles.itemDate}>
                   {new Date(item.fecha || item.fecha_menu).toLocaleDateString()}
                 </Text>
               </View>
-              <MaterialIcons 
-                name={selectedList === 'sumas' ? 'add-box' : selectedList === 'restas' ? 'indeterminate-check-box' : 'assignment'} 
-                size={24} color={currentConfig.color} 
+              <MaterialIcons
+                name={selectedList === 'sumas' ? 'add-box' : selectedList === 'restas' ? 'indeterminate-check-box' : 'assignment'}
+                size={24} color={currentConfig.color}
               />
             </View>
-          )} 
+          )}
         />
       )}
 
-      {/* MODAL DE OPCIONES (ESQUINA DERECHA) */}
+      {/* Modal de Opciones */}
       <Modal visible={modals.menu} transparent animationType="fade">
-        <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={() => setModals({menu: false})}>
+        <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={() => setModals({ menu: false })}>
           <View style={styles.dropdownMenu}>
-            <TouchableOpacity style={styles.dropdownOption} onPress={() => { setModals({menu: false}); navigation.navigate('Inventario'); }}>
-              <MaterialIcons name="storage" size={22} color="#0100D9" /><Text style={styles.dropdownText}>Ver Inventario</Text>
-            </TouchableOpacity>
-            
             <TouchableOpacity style={styles.dropdownOption} onPress={handleEnviarReporte}>
-              <MaterialIcons name="picture-as-pdf" size={22} color="#E91E63" /><Text style={styles.dropdownText}>Exportar Reporte PDF</Text>
+              <MaterialIcons name="picture-as-pdf" size={22} color="#E91E63" /><Text style={styles.dropdownText}>Exportar PDF</Text>
             </TouchableOpacity>
-
-            <TouchableOpacity style={styles.dropdownOption} onPress={() => { setFechaInicial(null); setFechaSecundaria(null); setModals({menu: false}); }}>
+            <TouchableOpacity style={styles.dropdownOption} onPress={() => { setFechaInicial(null); setFechaSecundaria(null); setModals({ menu: false }); }}>
               <MaterialIcons name="refresh" size={22} color="#FF9800" /><Text style={styles.dropdownText}>Limpiar Filtros</Text>
-            </TouchableOpacity>
-
-            <View style={styles.divider} />
-            <TouchableOpacity style={styles.dropdownOption} onPress={() => supabase.auth.signOut()}>
-              <MaterialIcons name="power-settings-new" size={22} color="#F44336" /><Text style={[styles.dropdownText, { color: '#F44336' }]}>Cerrar Sesión</Text>
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
       </Modal>
 
       {showDatePicker.show && (
-        <DateTimePicker 
-          value={new Date()} mode="date" 
-          onChange={(e, d) => { 
-            setShowDatePicker({ ...showDatePicker, show: false }); 
-            if(d) showDatePicker.type === 'inicial' ? setFechaInicial(d) : setFechaSecundaria(d); 
-          }} 
+        <DateTimePicker
+          value={new Date()} mode="date"
+          onChange={(e, d) => {
+            setShowDatePicker({ ...showDatePicker, show: false });
+            if (d) showDatePicker.type === 'inicial' ? setFechaInicial(d) : setFechaSecundaria(d);
+          }}
         />
       )}
     </SafeAreaView>
@@ -243,8 +247,7 @@ const styles = StyleSheet.create({
   itemSub: { color: '#777', fontSize: 13, marginTop: 3 },
   itemDate: { color: '#AAA', fontSize: 11, marginTop: 5, fontWeight: '500' },
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
-  dropdownMenu: { position: 'absolute', top: 80, right: 20, backgroundColor: '#fff', padding: 8, borderRadius: 15, minWidth: 220, elevation: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.2, shadowRadius: 5 },
+  dropdownMenu: { position: 'absolute', top: 80, right: 20, backgroundColor: '#fff', padding: 8, borderRadius: 15, minWidth: 200, elevation: 12 },
   dropdownOption: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 15 },
-  dropdownText: { marginLeft: 12, fontWeight: '700', color: '#444', fontSize: 14 },
-  divider: { height: 1, backgroundColor: '#F0F0F0', marginVertical: 6 }
+  dropdownText: { marginLeft: 12, fontWeight: '700', color: '#444', fontSize: 14 }
 });
