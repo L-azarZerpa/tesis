@@ -210,6 +210,14 @@ export default function InventarioScreen({ navigation, isRequestMode = false }) 
             try {
               setLoading(true);
 
+              // 0. Obtener IDs de lotes y desvincularlos de reportes de perdida
+              // Esto es CRITICO para evitar error de FK si el reporte ya no tiene producto_id pero si lote_id
+              const { data: lotesProd } = await supabase.from('lotes').select('id').eq('producto_id', producto.id);
+              const loteIds = lotesProd?.map(l => l.id) || [];
+              if (loteIds.length > 0) {
+                await supabase.from('reportes_perdida').update({ lote_id: null }).in('lote_id', loteIds);
+              }
+
               // 1. Desvincular de solicitudes (conservar el registro, quitar el ID)
               const { error: solError } = await supabase
                 .from('solicitudes_ajuste')
@@ -220,7 +228,7 @@ export default function InventarioScreen({ navigation, isRequestMode = false }) 
               // 2. Desvincular de reportes de pérdida
               const { error: repError } = await supabase
                 .from('reportes_perdida')
-                .update({ producto_id: null })
+                .update({ producto_id: null, lote_id: null })
                 .eq('producto_id', producto.id);
               if (repError) console.log("Warn: Reportes update", repError);
 

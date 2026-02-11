@@ -419,7 +419,7 @@ export default function MenusScreen({ navigation }) {
             <Text style={styles.fieldLabel}>AÑADIR INGREDIENTES</Text>
             <TextInput style={styles.formInput} placeholder="Buscar en inventario..." value={busquedaProd} onChangeText={setBusquedaProd} />
             {busquedaProd.length > 0 && (
-              <View style={styles.suggestions}>
+              <ScrollView style={styles.suggestions} nestedScrollEnabled={true} keyboardShouldPersistTaps="handled">
                 {productosDB.filter(p => p.nombre.toLowerCase().includes(busquedaProd.toLowerCase())).map(p => (
                   <TouchableOpacity key={p.id} style={styles.suggestionItem} onPress={() => {
                     if (!ingredientesSeleccionados.find(i => i.id === p.id)) { setIngredientesSeleccionados([...ingredientesSeleccionados, { ...p, cantidad_sugerida: '' }]); }
@@ -429,7 +429,7 @@ export default function MenusScreen({ navigation }) {
                     <MaterialIcons name="add" size={24} color="#0100D9" />
                   </TouchableOpacity>
                 ))}
-              </View>
+              </ScrollView>
             )}
             {ingredientesSeleccionados.map(ing => (
               <View key={ing.id} style={styles.ingredienteRow}>
